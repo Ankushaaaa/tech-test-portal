@@ -1,0 +1,112 @@
+import requests
+from flask import Flask, render_template, request, jsonify
+
+app = Flask(__name__)
+
+API_ENDPOINT = 'https://al-tech-test-apim.azure-api.net/tech-test/t2/patients/{nhsNumber}'
+
+
+QUESTIONS = [
+    'Do you drink more than two days a week?',
+    'Do you smoke?',
+    'Do you exercise more than one hour per week?'
+]
+
+SCORING = {
+    'age_group_16_21': {
+        'yes' : [1, 2, 0 ],
+        'no' :  [0, 0, 1 ]
+    },
+    'age_group_22_40': {
+        'yes' : [2, 2, 0 ],
+        'no' :  [0, 0, 3 ]
+    },
+    'age_group_41_65': {
+        'yes' : [3, 2, 0 ],
+        'no'  : [0, 0, 2 ]
+    },
+    'age_group_66_100': {
+        'yes' : [3, 1, 0 ],
+        'no'  : [0, 0, 1 ]
+    }
+           
+        }
+
+@app.route('/', methods=['GET', 'POST'])
+def home():
+    if request.method == 'POST':
+        nhs_number = request.form['nhs_number']
+        surname = request.form['surname']
+        date_of_birth = request.form['date_of_birth']
+        response = verify_client(nhs_number, surname, date_of_birth)
+
+        if response['found'] == False:
+            return render_template('patient_cannot_be_found.html') # display message that your details could not be found
+        elif response['details_match'] == False:
+            return render_template('incorrect_details.html') # display message that your details could not be found
+        elif response['age'] < 16:
+            return render_template('not_eligible.html') # display message that you are not eligible for this service
+        elif response['details_match'] == True:
+            age_group = get_age_group(response['age'])
+            return render_template('questions.html', questions=QUESTIONS, scoring=SCORING[age_group])
+
+    return render_template('index.html')
+
+@app.route('/result', methods=['POST'])
+def result():
+    answers = [request.form['answer' + str(i)] for i in range(len(QUESTIONS))]
+    age_group = request.form['age_group']
+
+    score = calculate_score(answers, age_group)
+
+
+    if score >= 4:
+        return render_template('change_required.html') # we think there are simple things you could do to improve your quality of life, please phone to book an appointment
+    else:
+        return render_template('no_change_needed.html') # thank you for answering our questions, we dont need to see you at this time. keep up the good work
+
+def verify_client(nhs_number, surname, date_of_birth):
+    # Make API request to verify client
+    data = {
+        'nhs_number': nhs_number,
+        'surname': surname,
+        'date_of_birth': date_of_birth
+    }
+    try :
+        response = requests.post(API_ENDPOINT, json=data)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {
+            'found': False,
+            'details_match': False,
+            'age' : None
+        }
+    except requests.RequestException :
+        return {
+            'found' : False,
+            'details_match' : False,
+            'age' : None
+        }
+
+def get_age_group(age):
+    if age >= 16 and age <= 21:
+        return 'age_group_16_21'
+    elif age >= 22 and age <= 40:
+        return 'age_group_22_40'
+    elif age >= 41 and age <= 65:
+        return 'age_group_41_65'
+    else:
+        return 'age_group_66_100'
+
+def calculate_score(answers, age_group):
+    score = 0
+    for i, answer in enumerate(answers):
+        if answer.lower() == 'yes':
+            score += SCORING[age_group]['yes'][i]
+        else:
+            score += SCORING[age_group]['no'][i]
+    return score
+
+if __name__ == '__main__':
+    app.run()
